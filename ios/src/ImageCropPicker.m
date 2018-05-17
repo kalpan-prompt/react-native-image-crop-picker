@@ -170,6 +170,7 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         picker.delegate = self;
         picker.allowsEditing = NO;
         picker.sourceType = UIImagePickerControllerSourceTypeCamera;
+        
         NSString *mediaType = [self.options objectForKey:@"mediaType"];
         if ([[self.options objectForKey:@"useFrontCamera"] boolValue]) {
             picker.cameraDevice = UIImagePickerControllerCameraDeviceFront;
@@ -177,18 +178,19 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         if ([mediaType isEqualToString:@"video"]) {
             
             NSString *presetKey = [self.options valueForKey:@"compressVideoPreset"];
+            
             if (presetKey) {
-                if([presetKey isEqualToString:@"HighQuality"]){
+                if([presetKey isEqualToString:@"HighQuality"]) {
                     picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
                 }
-                else if ([presetKey isEqualToString:@"MediumQuality"]){
+                else if ([presetKey isEqualToString:@"MediumQuality"]) {
                     picker.videoQuality = UIImagePickerControllerQualityTypeMedium;
                 }
-                else{
+                else {
                     picker.videoQuality = UIImagePickerControllerQualityTypeLow;
                 }
             }
-            else{
+            else {
                 picker.videoQuality = UIImagePickerControllerQualityTypeMedium;
             }
             
@@ -209,9 +211,6 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
 - (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info {
     UIImage *chosenImage = [info objectForKey:UIImagePickerControllerOriginalImage];
     
-    
-    // PS :- Capture Video Get and Convert it to Asset
-    
     NSDictionary *exif;
     if([[self.options objectForKey:@"includeExif"] boolValue]) {
         exif = [info objectForKey:UIImagePickerControllerMediaMetadata];
@@ -219,10 +218,12 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
     NSURL *fileURL = info[UIImagePickerControllerMediaURL];
     NSString *mediaType = [self.options objectForKey:@"mediaType"];
     if ([mediaType isEqualToString:@"video"]) {
-        
+        NSString *fileExtension = [fileURL pathExtension];
+        NSString *UTI = (__bridge_transfer NSString *)UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, (__bridge CFStringRef)fileExtension, NULL);
+        NSString *contentType = (__bridge_transfer NSString *)UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)UTI, kUTTagClassMIMEType);
         AVURLAsset *avAsset = [AVURLAsset URLAssetWithURL:fileURL options:nil];
         NSArray *compatiblePresets = [AVAssetExportSession exportPresetsCompatibleWithAsset:avAsset];
-        [self getVideoAssetFromCamera:avAsset completion:^(NSDictionary* video) {
+        [self getVideoAssetFromCamera:avAsset fileExtension:fileExtension mimeType:contentType  completion:^(NSDictionary* video) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 
                 [picker dismissViewControllerAnimated:YES completion:[self waitAnimationEnd:^{
@@ -234,6 +235,8 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
                 }]];
             });
         }];
+        
+        
     }
     else{
         if([[self.options objectForKey:@"includeExif"] boolValue]) {
@@ -241,6 +244,7 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         }
         [self processSingleImagePick:chosenImage withExif:exif withViewController:picker withSourceURL:self.croppingFile[@"sourceURL"] withLocalIdentifier:self.croppingFile[@"localIdentifier"] withFilename:self.croppingFile[@"filename"] withCreationDate:self.croppingFile[@"creationDate"] withModificationDate:self.croppingFile[@"modificationDate"]];
     }
+    
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
@@ -450,6 +454,19 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         [self.loadingLabel setFont:[UIFont boldSystemFontOfSize:18]];
         [loadingView addSubview:self.loadingLabel];
         
+        // PS :- Created Cancel Button
+        
+        
+        self.btnCancel = [[UIButton alloc]initWithFrame:CGRectMake(0, loadingView.frame.size.height-50, loadingView.frame.size.width, 50)];
+        
+        [self.btnCancel addTarget:self action:@selector(btnCancelAction:) forControlEvents:UIControlEventTouchUpInside];
+        
+        [self.btnCancel setTitle:@"Cancel" forState:UIControlStateNormal];
+        [self.btnCancel setTitle:@"Cancel" forState:UIControlStateSelected];
+        [self.btnCancel setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+        self.btnCancel.backgroundColor = [UIColor whiteColor];
+        [loadingView addSubview:self.btnCancel];
+        
         // show all
         [mainView addSubview:loadingView];
         [activityView startAnimating];
@@ -459,12 +476,21 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
 }
 
 
+-(IBAction)btnCancelAction:(id)sender{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *vc =   [self getRootVC] ;
+        [vc dismissViewControllerAnimated:true completion:^{
+            self.manager = nil;
+            self.reject(ERROR_CANNOT_PROCESS_VIDEO_KEY, ERROR_CANNOT_PROCESS_VIDEO_MSG, nil);
+        }];
+    });
+    
+}
 
 
-// PS :- Convert Captured Video to the AVAsset
-
-- (void) getVideoAssetFromCamera:(AVURLAsset*)avAsset completion:(void (^)(NSDictionary* image))completion {
+- (void) getVideoAssetFromCamera:(AVURLAsset*)avAsset fileExtension:(NSString *)fileExtension mimeType:(NSString *)mimetype completion:(void (^)(NSDictionary* image))completion {
     @try {
+        
         
         NSArray *compatiblePresets = [AVAssetExportSession exportPresetsCompatibleWithAsset:avAsset];
         
@@ -472,13 +498,15 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         {
             AVAssetExportSession *exportSession = [[AVAssetExportSession alloc]initWithAsset:avAsset presetName:AVAssetExportPresetPassthrough];
             // save to temp directory
-            NSString *filePath = [[[self getTmpDirectory] stringByAppendingString:[[NSUUID UUID] UUIDString]] stringByAppendingString:@".mp4"];
             
-            NSString *strFileName = [[[NSUUID UUID] UUIDString] stringByAppendingString:@".mp4"];
+            NSString *strFileName = [[[NSUUID UUID] UUIDString] stringByAppendingString:[NSString stringWithFormat:@".%@",fileExtension]];
+            NSString *filePath = [[self getTmpDirectory] stringByAppendingString:strFileName];
+            
+            
             NSURL *outputURL = [NSURL fileURLWithPath:filePath];
             
             exportSession.outputURL = outputURL;
-            NSLog(@"videopath of your mp4 file = %@",filePath);  // PATH OF YOUR .mp4 FILE
+            NSLog(@"videopath of your  file = %@",filePath);  // PATH OF YOUR FILE
             exportSession.outputFileType = AVFileTypeMPEG4;
             
             [exportSession exportAsynchronouslyWithCompletionHandler:^{
@@ -495,7 +523,7 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
                                                             withFilename:strFileName
                                                                withWidth:[NSNumber numberWithFloat:videoTrack.naturalSize.width]
                                                               withHeight:[NSNumber numberWithFloat:videoTrack.naturalSize.height]
-                                                                withMime:@"video/mp4"
+                                                                withMime:mimetype
                                                                 withSize:filesize
                                                                 withData:nil
                                                                 withRect:CGRectNull
@@ -513,9 +541,10 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
 }
 
 
+
 - (void) getVideoAsset:(PHAsset*)forAsset completion:(void (^)(NSDictionary* image))completion {
     NSString *loadingLabelTextTemp = [self.options objectForKey:@"loadingLabelText"];
-    PHImageManager *manager = [PHImageManager defaultManager];
+    self.manager = [PHImageManager defaultManager];
     PHVideoRequestOptions *options = [[PHVideoRequestOptions alloc] init];
     options.version = PHVideoRequestOptionsVersionCurrent;
     // This is for videos stored in iCloud
@@ -527,6 +556,9 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
             [self.loadingLabel setText:@"Downloading from iCloud..."];
         });
     };
+    
+    
+    
     // Create temp file
     NSString *filePath = [[[self getTmpDirectory] stringByAppendingString:[[NSUUID UUID] UUIDString]] stringByAppendingString:@".mp4"];
     NSURL *outputURL = [NSURL fileURLWithPath:filePath];
@@ -539,39 +571,40 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
     if (preset == nil) {
         preset = AVAssetExportPresetMediumQuality;
     }
-    [manager requestExportSessionForVideo:forAsset
-                                  options:options
-                             exportPreset:preset
-                            resultHandler:^(AVAssetExportSession * _Nullable exportSession, NSDictionary * _Nullable info) {
-                                dispatch_async(dispatch_get_main_queue(), ^{
-                                    [self.loadingLabel setText:loadingLabelTextTemp];
-                                });
-                                exportSession.shouldOptimizeForNetworkUse = YES;
-                                exportSession.outputURL = outputURL;
-                                exportSession.outputFileType = AVFileTypeMPEG4;
-                                [exportSession exportAsynchronouslyWithCompletionHandler:^{
-                                    if (exportSession.status == AVAssetExportSessionStatusCompleted) {
-                                        AVAsset *compressedAsset = [AVAsset assetWithURL:outputURL];
-                                        AVAssetTrack *videoTrack = [[compressedAsset tracksWithMediaType:AVMediaTypeVideo] firstObject];
-                                        NSNumber *filesize = nil;
-                                        [outputURL getResourceValue:&filesize forKey:NSURLFileSizeKey error:nil];
-                                        NSDictionary *video = [self createAttachmentResponse:[outputURL absoluteString]
-                                                                                    withExif:nil
-                                                                               withSourceURL:nil
-                                                                         withLocalIdentifier:forAsset.localIdentifier
-                                                                                withFilename:[forAsset valueForKey:@"filename"]
-                                                                                   withWidth:[NSNumber numberWithFloat:videoTrack.naturalSize.width]
-                                                                                  withHeight:[NSNumber numberWithFloat:videoTrack.naturalSize.height]
-                                                                                    withMime:@"video/mp4"
-                                                                                    withSize:filesize
-                                                                                    withData:nil
-                                                                                    withRect:CGRectNull
-                                                                            withCreationDate:forAsset.creationDate
-                                                                        withModificationDate:forAsset.modificationDate];
-                                        completion(video);
-                                    }
-                                }];
-                            }];
+    
+    [self.manager requestExportSessionForVideo:forAsset
+                                       options:options
+                                  exportPreset:preset
+                                 resultHandler:^(AVAssetExportSession * _Nullable exportSession, NSDictionary * _Nullable info) {
+                                     dispatch_async(dispatch_get_main_queue(), ^{
+                                         [self.loadingLabel setText:loadingLabelTextTemp];
+                                     });
+                                     exportSession.shouldOptimizeForNetworkUse = YES;
+                                     exportSession.outputURL = outputURL;
+                                     exportSession.outputFileType = AVFileTypeMPEG4;
+                                     [exportSession exportAsynchronouslyWithCompletionHandler:^{
+                                         if (exportSession.status == AVAssetExportSessionStatusCompleted) {
+                                             AVAsset *compressedAsset = [AVAsset assetWithURL:outputURL];
+                                             AVAssetTrack *videoTrack = [[compressedAsset tracksWithMediaType:AVMediaTypeVideo] firstObject];
+                                             NSNumber *filesize = nil;
+                                             [outputURL getResourceValue:&filesize forKey:NSURLFileSizeKey error:nil];
+                                             NSDictionary *video = [self createAttachmentResponse:[outputURL absoluteString]
+                                                                                         withExif:nil
+                                                                                    withSourceURL:nil
+                                                                              withLocalIdentifier:forAsset.localIdentifier
+                                                                                     withFilename:[forAsset valueForKey:@"filename"]
+                                                                                        withWidth:[NSNumber numberWithFloat:videoTrack.naturalSize.width]
+                                                                                       withHeight:[NSNumber numberWithFloat:videoTrack.naturalSize.height]
+                                                                                         withMime:@"video/mp4"
+                                                                                         withSize:filesize
+                                                                                         withData:nil
+                                                                                         withRect:CGRectNull
+                                                                                 withCreationDate:forAsset.creationDate
+                                                                             withModificationDate:forAsset.modificationDate];
+                                             completion(video);
+                                         }
+                                     }];
+                                 }];
 }
 
 - (NSDictionary*) createAttachmentResponse:(NSString*)filePath withExif:(NSDictionary*) exif withSourceURL:(NSString*)sourceURL withLocalIdentifier:(NSString*)localIdentifier withFilename:(NSString*)filename withWidth:(NSNumber*)width withHeight:(NSNumber*)height withMime:(NSString*)mime withSize:(NSNumber*)size withData:(NSString*)data withRect:(CGRect)cropRect withCreationDate:(NSDate*)creationDate withModificationDate:(NSDate*)modificationDate {
@@ -1017,5 +1050,3 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
 }
 
 @end
-
-
