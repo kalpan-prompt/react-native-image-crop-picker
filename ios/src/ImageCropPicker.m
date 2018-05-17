@@ -170,6 +170,7 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         picker.delegate = self;
         picker.allowsEditing = NO;
         picker.sourceType = UIImagePickerControllerSourceTypeCamera;
+        //   picker.sourceType = UIImagePickerControllerSourceTypeCamera;
         NSString *mediaType = [self.options objectForKey:@"mediaType"];
         if ([[self.options objectForKey:@"useFrontCamera"] boolValue]) {
             picker.cameraDevice = UIImagePickerControllerCameraDeviceFront;
@@ -210,7 +211,23 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
     UIImage *chosenImage = [info objectForKey:UIImagePickerControllerOriginalImage];
     
     
-    // PS :- Capture Video Get and Convert it to Asset
+    //    PHPhotoLibrary.shared().performChanges({
+    //        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+    //    }) { saved, error in
+    //        if saved {
+    //            let fetchOptions = PHFetchOptions()
+    //            fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    //
+    //            let fetchResult = PHAsset.fetchAssets(with: .video, options: fetchOptions).firstObject
+    //            // fetchResult is your latest video PHAsset
+    //            // To fetch latest image  replace .video with .image
+    //        }
+    //    }
+    
+    
+    
+    
+    
     
     NSDictionary *exif;
     if([[self.options objectForKey:@"includeExif"] boolValue]) {
@@ -224,7 +241,8 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         NSArray *compatiblePresets = [AVAssetExportSession exportPresetsCompatibleWithAsset:avAsset];
         [self getVideoAssetFromCamera:avAsset completion:^(NSDictionary* video) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                
+                //                [indicatorView stopAnimating];
+                //                [overlayView removeFromSuperview];
                 [picker dismissViewControllerAnimated:YES completion:[self waitAnimationEnd:^{
                     if (video != nil) {
                         self.resolve(video);
@@ -234,6 +252,52 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
                 }]];
             });
         }];
+        
+        
+        
+        
+        //     [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+        //            if (status != PHAuthorizationStatusAuthorized) {
+        //                self.reject(ERROR_PICKER_UNAUTHORIZED_KEY, ERROR_PICKER_UNAUTHORIZED_MSG, nil);
+        //                return;
+        //            }
+        //
+        //
+        //
+        //
+        //        [[PHPhotoLibrary sharedPhotoLibrary]performChanges:^{
+        //            [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:fileURL];
+        //        } completionHandler:^(BOOL success, NSError * _Nullable error) {
+        //            if(success){
+        //                PHFetchOptions *fetchOptions = [[PHFetchOptions alloc]init];
+        //                PHFetchResult *fetchResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeVideo options:fetchOptions];
+        //                PHAsset *asset = [fetchResult lastObject];
+        //                [self getVideoAsset:asset completion:^(NSDictionary* video) {
+        //                    dispatch_async(dispatch_get_main_queue(), ^{
+        //                        //                [indicatorView stopAnimating];
+        //                        //                [overlayView removeFromSuperview];
+        //                        [picker dismissViewControllerAnimated:YES completion:[self waitAnimationEnd:^{
+        //                            if (video != nil) {
+        //                                NSLog(@"%@",video);
+        //                                self.resolve(video);
+        //                            } else {
+        //                                self.reject(ERROR_CANNOT_PROCESS_VIDEO_KEY, ERROR_CANNOT_PROCESS_VIDEO_MSG, nil);
+        //                            }
+        //                        }]];
+        //                    });
+        //                }];
+        //
+        //            }
+        //        }];
+        //        }];
+        
+        
+        
+        
+        
+        
+        //             [self processSingleImagePick:chosenImage withExif:exif withViewController:picker withSourceURL:self.croppingFile[@"sourceURL"] withLocalIdentifier:self.croppingFile[@"localIdentifier"] withFilename:self.croppingFile[@"filename"] withCreationDate:self.croppingFile[@"creationDate"] withModificationDate:self.croppingFile[@"modificationDate"]];
+        
     }
     else{
         if([[self.options objectForKey:@"includeExif"] boolValue]) {
@@ -241,6 +305,7 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         }
         [self processSingleImagePick:chosenImage withExif:exif withViewController:picker withSourceURL:self.croppingFile[@"sourceURL"] withLocalIdentifier:self.croppingFile[@"localIdentifier"] withFilename:self.croppingFile[@"filename"] withCreationDate:self.croppingFile[@"creationDate"] withModificationDate:self.croppingFile[@"modificationDate"]];
     }
+    
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
@@ -450,6 +515,19 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         [self.loadingLabel setFont:[UIFont boldSystemFontOfSize:18]];
         [loadingView addSubview:self.loadingLabel];
         
+        
+        
+        // PS :- Created Cancel Button
+        self.btnCancel = [[UIButton alloc]initWithFrame:CGRectMake(0, loadingView.frame.size.height-50, loadingView.frame.size.width, 50)];
+        
+        [self.btnCancel addTarget:self action:@selector(btnCancelAction:) forControlEvents:UIControlEventTouchUpInside];
+        
+        [self.btnCancel setTitle:@"Cancel" forState:UIControlStateNormal];
+        [self.btnCancel setTitle:@"Cancel" forState:UIControlStateSelected];
+        [self.btnCancel setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+        self.btnCancel.backgroundColor = [UIColor whiteColor];
+        [loadingView addSubview:self.btnCancel];
+        
         // show all
         [mainView addSubview:loadingView];
         [activityView startAnimating];
@@ -459,13 +537,24 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
 }
 
 
+// PS :- Cancel Button Press Event
 
+-(IBAction)btnCancelAction:(id)sender{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *vc =   [self getRootVC] ;
+        [vc dismissViewControllerAnimated:true completion:^{
+            self.reject(ERROR_CANNOT_PROCESS_VIDEO_KEY, ERROR_CANNOT_PROCESS_VIDEO_MSG, nil);
+        }];
+    });
+    
+}
 
-// PS :- Convert Captured Video to the AVAsset
 
 - (void) getVideoAssetFromCamera:(AVURLAsset*)avAsset completion:(void (^)(NSDictionary* image))completion {
     @try {
-        
+        //        movPath = [movPath stringByReplacingOccurrencesOfString:@"file://"
+        //                                                     withString:@""];
+        //        AVURLAsset *avAsset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:movPath] options:nil];
         NSArray *compatiblePresets = [AVAssetExportSession exportPresetsCompatibleWithAsset:avAsset];
         
         if ([compatiblePresets containsObject:AVAssetExportPresetLowQuality])
@@ -511,6 +600,18 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 - (void) getVideoAsset:(PHAsset*)forAsset completion:(void (^)(NSDictionary* image))completion {
@@ -1017,5 +1118,3 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
 }
 
 @end
-
-
