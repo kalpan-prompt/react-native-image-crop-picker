@@ -54,7 +54,6 @@ typedef enum selectionMode {
 @property (nonatomic, strong) RCTPromiseResolveBlock resolve;
 @property (nonatomic, strong) RCTPromiseRejectBlock reject;
 @property (nonatomic, strong) UILabel *loadingLabel;
-@property (nonatomic, strong) UIButton *btnCancel;
 @property SelectionMode currentSelectionMode;
 
 @end
