@@ -177,6 +177,7 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         if ([[self.options objectForKey:@"useFrontCamera"] boolValue]) {
             picker.cameraDevice = UIImagePickerControllerCameraDeviceFront;
         }
+
         if ([mediaType isEqualToString:@"video"]) {
             
             
@@ -221,6 +222,7 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
     if([[self.options objectForKey:@"includeExif"] boolValue]) {
         exif = [info objectForKey:UIImagePickerControllerMediaMetadata];
     }
+
     NSURL *fileURL = info[UIImagePickerControllerMediaURL];
     NSString *mediaType = [self.options objectForKey:@"mediaType"];
     if ([mediaType isEqualToString:@"video"]) {
@@ -248,7 +250,8 @@ RCT_EXPORT_METHOD(openCamera:(NSDictionary *)options
         if([[self.options objectForKey:@"includeExif"] boolValue]) {
             exif = [info objectForKey:UIImagePickerControllerMediaMetadata];
         }
-        [self processSingleImagePick:chosenImage withExif:exif withViewController:picker withSourceURL:self.croppingFile[@"sourceURL"] withLocalIdentifier:self.croppingFile[@"localIdentifier"] withFilename:self.croppingFile[@"filename"] withCreationDate:self.croppingFile[@"creationDate"] withModificationDate:self.croppingFile[@"modificationDate"]];
+    NSData* imageData = UIImageJPEGRepresentation(chosenImage, 1);
+    [self processSingleImagePick:imageData withExif:exif withViewController:picker withSourceURL:self.croppingFile[@"sourceURL"] withLocalIdentifier:self.croppingFile[@"localIdentifier"] withFilename:self.croppingFile[@"filename"] withCreationDate:self.croppingFile[@"creationDate"] withModificationDate:self.croppingFile[@"modificationDate"]];
     }
     
 }
@@ -460,8 +463,7 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         [self.loadingLabel setFont:[UIFont boldSystemFontOfSize:18]];
         [loadingView addSubview:self.loadingLabel];
         
-        // PS :- Created Cancel Button
-        
+        // PS :- Created Cancel Button      
         
         self.btnCancel = [[UIButton alloc]initWithFrame:CGRectMake(0, loadingView.frame.size.height-50, loadingView.frame.size.width, 50)];
         
@@ -480,6 +482,7 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         handler(activityView, loadingView);
     });
 }
+
 
 
 -(IBAction)btnCancelAction:(id)sender{
@@ -550,11 +553,6 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         
     }
 }
-
-
-
-
-
 
 - (void) getVideoAsset:(PHAsset*)forAsset completion:(void (^)(NSDictionary* image))completion {
     NSString *loadingLabelTextTemp = [self.options objectForKey:@"loadingLabelText"];
@@ -665,7 +663,51 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         case 0x4D:
             return @"image/tiff";
     }
-    return @"";
+    return @"image/jpeg";
+}
+
+- (NSString *)determineExtensionFromImageData:(NSData *)data {
+    uint8_t c;
+    [data getBytes:&c length:1];
+    
+    switch (c) {
+        case 0xFF:
+            return @".jpg";
+        case 0x89:
+            return @".png";
+        case 0x47:
+            return @".gif";
+        case 0x49:
+        case 0x4D:
+            return @".tiff";
+    }
+    return @".jpg";
+}
+
+static ImageResult * getResizedCompressedImageIfNeedded(ImageCropPicker *object, NSData *imageData) {
+    UIImage *imgT = [UIImage imageWithData:imageData];
+    
+    NSNumber *compressQuality = [object.options valueForKey:@"compressImageQuality"];
+    Boolean isLossless = (compressQuality == nil || [compressQuality floatValue] == 1);
+    
+    NSNumber *maxWidth = [object.options valueForKey:@"compressImageMaxWidth"];
+    Boolean useOriginalWidth = (maxWidth == nil || [maxWidth integerValue] >= imgT.size.width);
+    
+    NSNumber *maxHeight = [object.options valueForKey:@"compressImageMaxHeight"];
+    Boolean useOriginalHeight = (maxHeight == nil || [maxHeight integerValue] >= imgT.size.height);
+    NSString* mime = [object determineMimeTypeFromImageData:imageData];
+    ImageResult *imageResult = [[ImageResult alloc] init];
+    if ([mime isEqualToString:@"image/gif"] || (isLossless && useOriginalWidth && useOriginalHeight)) {
+        // Use original, unmodified image
+        imageResult.data = imageData;
+        imageResult.width = @(imgT.size.width);
+        imageResult.height = @(imgT.size.height);
+        imageResult.mime = mime;
+        imageResult.image = imgT;
+    } else {
+        imageResult = [object.compression compressImage:[imgT fixOrientation] withOptions:object.options];
+    }
+    return imageResult;
 }
 
 - (void)qb_imagePickerController:
@@ -673,6 +715,7 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
           didFinishPickingAssets:(NSArray *)assets {
     
     self.manager = [PHImageManager defaultManager];
+
     PHImageRequestOptions* options = [[PHImageRequestOptions alloc] init];
     options.synchronous = NO;
     options.networkAccessAllowed = YES;
@@ -727,28 +770,7 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
                          dispatch_async(dispatch_get_main_queue(), ^{
                              [lock lock];
                              @autoreleasepool {
-                                 UIImage *imgT = [UIImage imageWithData:imageData];
-                                 
-                                 NSNumber *compressQuality = [self.options valueForKey:@"compressImageQuality"];
-                                 Boolean isLossless = (compressQuality == nil || [compressQuality floatValue] == 1);
-                                 
-                                 NSNumber *maxWidth = [self.options valueForKey:@"compressImageMaxWidth"];
-                                 Boolean useOriginalWidth = (maxWidth == nil || [maxWidth integerValue] >= imgT.size.width);
-                                 
-                                 NSNumber *maxHeight = [self.options valueForKey:@"compressImageMaxHeight"];
-                                 Boolean useOriginalHeight = (maxHeight == nil || [maxHeight integerValue] >= imgT.size.height);
-                                 
-                                 ImageResult *imageResult = [[ImageResult alloc] init];
-                                 if (isLossless && useOriginalWidth && useOriginalHeight) {
-                                     // Use original, unmodified image
-                                     imageResult.data = imageData;
-                                     imageResult.width = @(imgT.size.width);
-                                     imageResult.height = @(imgT.size.height);
-                                     imageResult.mime = [self determineMimeTypeFromImageData:imageData];
-                                     imageResult.image = imgT;
-                                 } else {
-                                     imageResult = [self.compression compressImage:[imgT fixOrientation] withOptions:self.options];
-                                 }
+                                 ImageResult * imageResult = getResizedCompressedImageIfNeedded(self, imageData);
                                  
                                  NSString *filePath = @"";
                                  if([[self.options objectForKey:@"writeTempFile"] boolValue]) {
@@ -839,8 +861,9 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
                      dispatch_async(dispatch_get_main_queue(), ^{
                          [indicatorView stopAnimating];
                          [overlayView removeFromSuperview];
-                         [self.arrImageProcessId removeAllObjects];
-                         [self processSingleImagePick:[UIImage imageWithData:imageData]
+                         [self.arrImageProcessId removeAllObjects];   
+                         [self processSingleImagePick:imageData
+
                                              withExif: exif
                                    withViewController:imagePickerController
                                         withSourceURL:[sourceURL absoluteString]
@@ -864,8 +887,10 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
 // when user selected single image, with camera or from photo gallery,
 // this method will take care of attaching image metadata, and sending image to cropping controller
 // or to user directly
-- (void) processSingleImagePick:(UIImage*)image withExif:(NSDictionary*) exif withViewController:(UIViewController*)viewController withSourceURL:(NSString*)sourceURL withLocalIdentifier:(NSString*)localIdentifier withFilename:(NSString*)filename withCreationDate:(NSDate*)creationDate withModificationDate:(NSDate*)modificationDate {
-    
+
+- (void) processSingleImagePick:(NSData*)imageData withExif:(NSDictionary*) exif withViewController:(UIViewController*)viewController withSourceURL:(NSString*)sourceURL withLocalIdentifier:(NSString*)localIdentifier withFilename:(NSString*)filename withCreationDate:(NSDate*)creationDate withModificationDate:(NSDate*)modificationDate {
+    UIImage* image = [UIImage imageWithData:imageData];
+
     if (image == nil) {
         [viewController dismissViewControllerAnimated:YES completion:[self waitAnimationEnd:^{
             self.reject(ERROR_PICKER_NO_DATA_KEY, ERROR_PICKER_NO_DATA_MSG, nil);
@@ -886,7 +911,9 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
         
         [self startCropping:[image fixOrientation]];
     } else {
-        ImageResult *imageResult = [self.compression compressImage:[image fixOrientation]  withOptions:self.options];
+        
+        ImageResult * imageResult = getResizedCompressedImageIfNeedded(self, imageData);
+
         NSString *filePath = [self persistFile:imageResult.data];
         if (filePath == nil) {
             [viewController dismissViewControllerAnimated:YES completion:[self waitAnimationEnd:^{
@@ -1047,7 +1074,8 @@ RCT_EXPORT_METHOD(openCropper:(NSDictionary *)options
     // create temp file
     NSString *tmpDirFullPath = [self getTmpDirectory];
     NSString *filePath = [tmpDirFullPath stringByAppendingString:[[NSUUID UUID] UUIDString]];
-    filePath = [filePath stringByAppendingString:@".jpg"];
+    NSString* ext = [self determineExtensionFromImageData:data];
+    filePath = [filePath stringByAppendingString:ext];
     
     // save cropped file
     BOOL status = [data writeToFile:filePath atomically:YES];
